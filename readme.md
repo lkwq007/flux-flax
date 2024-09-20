@@ -2,9 +2,11 @@
 
 A JAX port of FLUX.1 models using `flax.nnx`. 
 
+![img](https://github.com/user-attachments/assets/77a9bf56-8da7-434d-9faf-1510a33e63dd)
+
 ## Status
 
-Only tested with GPU now. TPU support is planned.
+Only tested with GPU now. 
 
 Currently no quantization support & no torch-like CPU offloading support. 
 

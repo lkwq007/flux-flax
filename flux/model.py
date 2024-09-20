@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 
-import torch
-from torch import Tensor, nn
+
+import jax.numpy as jnp
+from jax import Array as Tensor
+from flax import nnx
+
+from flux.wrapper import TorchWrapper
 
 from flux.modules.layers import (DoubleStreamBlock, EmbedND, LastLayer,
                                  MLPEmbedder, SingleStreamBlock,
@@ -24,14 +28,16 @@ class FluxParams:
     guidance_embed: bool
 
 
-class Flux(nn.Module):
+DoubleStreamBlock_class, EmbedND_class, LastLayer_class, MLPEmbedder_class, SingleStreamBlock_class = DoubleStreamBlock, EmbedND, LastLayer, MLPEmbedder, SingleStreamBlock
+
+class Flux(nnx.Module):
     """
     Transformer model for flow matching on sequences.
     """
 
-    def __init__(self, params: FluxParams):
-        super().__init__()
-
+    def __init__(self, params: FluxParams, dtype: jnp.dtype = jnp.float32, rngs: nnx.Rngs = None):
+        nn = TorchWrapper(rngs=rngs, dtype=dtype)
+        DoubleStreamBlock, EmbedND, LastLayer, MLPEmbedder, SingleStreamBlock = nn.declare_with_rng(DoubleStreamBlock_class, EmbedND_class, LastLayer_class, MLPEmbedder_class, SingleStreamBlock_class)
         self.params = params
         self.in_channels = params.in_channels
         self.out_channels = self.in_channels
@@ -74,7 +80,7 @@ class Flux(nn.Module):
 
         self.final_layer = LastLayer(self.hidden_size, 1, self.out_channels)
 
-    def forward(
+    def __call__(
         self,
         img: Tensor,
         img_ids: Tensor,
@@ -97,13 +103,15 @@ class Flux(nn.Module):
         vec = vec + self.vector_in(y)
         txt = self.txt_in(txt)
 
-        ids = torch.cat((txt_ids, img_ids), dim=1)
+        # ids = torch.cat((txt_ids, img_ids), dim=1)
+        ids = jnp.concatenate((txt_ids, img_ids), axis=1)
         pe = self.pe_embedder(ids)
 
         for block in self.double_blocks:
             img, txt = block(img=img, txt=txt, vec=vec, pe=pe)
 
-        img = torch.cat((txt, img), 1)
+        # img = torch.cat((txt, img), 1)
+        img = jnp.concatenate((txt, img), axis=1)
         for block in self.single_blocks:
             img = block(img, vec=vec, pe=pe)
         img = img[:, txt.shape[1] :, ...]

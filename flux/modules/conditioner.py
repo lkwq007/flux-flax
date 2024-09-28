@@ -1,4 +1,5 @@
 from flax import nnx
+import jax
 import jax.numpy as jnp
 from jax import Array as Tensor
 
@@ -11,17 +12,20 @@ class HFEmbedder(nnx.Module):
         self.is_clip = version.startswith("openai")
         self.max_length = max_length
         self.output_key = "pooler_output" if self.is_clip else "last_hidden_state"
-        dtype = hf_kwargs.get("dtype", jnp.float32)
+        # dtype = hf_kwargs.get("dtype", jnp.float32)
+        dtype=jnp.bfloat16
         if self.is_clip:
             self.tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(version, max_length=max_length)
             # self.hf_module: CLIPTextModel = CLIPTextModel.from_pretrained(version, **hf_kwargs)
-            self.hf_module: FlaxCLIPTextModel = FlaxCLIPTextModel.from_pretrained(version, **hf_kwargs)
+            self.hf_module, params = FlaxCLIPTextModel.from_pretrained(version, _do_init=False, **hf_kwargs)
         else:
             self.tokenizer: T5Tokenizer = T5Tokenizer.from_pretrained(version, max_length=max_length)
             # self.hf_module: T5EncoderModel = T5EncoderModel.from_pretrained(version, **hf_kwargs)
-            self.hf_module: FlaxT5EncoderModel = FlaxT5EncoderModel.from_pretrained(version, **hf_kwargs)
-        if dtype==jnp.bfloat16:
-            self.hf_module.params = self.hf_module.to_bf16(self.hf_module.params)
+            self.hf_module, params = FlaxT5EncoderModel.from_pretrained(version, _do_init=False,**hf_kwargs)
+        self.hf_module._is_initialized = True
+        self.hf_module.params = jax.tree.map(lambda x: jax.device_put(x, jax.devices("cuda")[0]), params)
+        # if dtype==jnp.bfloat16:
+            # self.hf_module.params = self.hf_module.to_bf16(self.hf_module.params)
 
     def tokenize(self, text: list[str]) -> Tensor:
         batch_encoding = self.tokenizer(

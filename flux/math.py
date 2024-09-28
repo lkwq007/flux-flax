@@ -1,8 +1,10 @@
 # import torch
+import math
 import jax
 import jax.numpy as jnp
 from einops import rearrange
 from flax import nnx
+
 Tensor=jax.Array
 
 def check_tpu():
@@ -14,20 +16,32 @@ if check_tpu():
     # q,  # [batch_size, num_heads, q_seq_len, d_model]
     # k,  # [batch_size, num_heads, kv_seq_len, d_model]
     # v,  # [batch_size, num_heads, kv_seq_len, d_model]
+    def flash_mha(q, k, v):
+        return flash_attention(q, k, v, sm_scale=1/math.sqrt(q.shape[-1]))
 else:
-    try:
-        from flash_attn_jax import flash_mha
-    except:
-        flash_mha = nnx.dot_product_attention
-        
-    from jax.experimental.pallas.ops.gpu.attention import mha
+    from jax.experimental.pallas.ops.gpu.attention import mha, mha_reference
+    def pallas_mha(q, k, v):
+        # B L H D
+        # return mha_reference(q,k,v,segment_ids=None,sm_scale=1/math.sqrt(q.shape[-1]))
+        q_len=q.shape[1]
+        diff=(-q_len)&127
+        segment_ids=jnp.zeros((q.shape[0],q.shape[1]),dtype=jnp.int32)
+        segment_ids=jnp.pad(segment_ids,((0,0),(0,diff)),mode="constant",constant_values=1)
+        # q,k,v=map(lambda x: jnp.pad(x,((0,0),(0,diff),(0,0),(0,0)),mode="constant", constant_values=0),(q,k,v))
+        return mha(q,k,v,segment_ids=segment_ids,sm_scale=1/math.sqrt(q.shape[-1]))#[:,:q_len]
     # mha: batch_size, seq_len, num_heads, head_dim = q.shape
     from functools import partial
     from flux.modules.attention_flax import jax_memory_efficient_attention
-    # dot_product_attention = partial(dot_product_attention_func, segment_ids=None)
+    try:
+        from flash_attn_jax import flash_mha
+    except:
+        flash_mha = pallas_mha
+        # flash_mha = nnx.dot_product_attention
+
+
     def dot_product_attention(q, k, v, sm_scale=1.0):
         q,k,v=map(lambda x: rearrange(x, "b h n d -> b n h d"), (q,k,v))
-        # ret = flash_mha(q,k,v)
+        # ret = pallas_mha(q,k,v)
         ret = nnx.dot_product_attention(q,k,v)
         # if q.shape[-3] % 64 == 0:
         #     query_chunk_size = int(q.shape[-3] / 64)
@@ -42,13 +56,13 @@ else:
 
 def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor) -> Tensor:
     q, k = apply_rope(q, k, pe)
-
     # x = torch.nn.functional.scaled_dot_product_attention(q, k, v)
     # q is B H L D
     q,k,v=map(lambda x: rearrange(x, "B H L D -> B L H D"), (q,k,v))
     # x = nnx.dot_product_attention(q,k,v)
-    # x = dot_product_attention_func(q, k, v, segment_ids=None, sm_scale=np.sqrt(q.shape[-1]))
     x = flash_mha(q,k,v)
+    # x = pallas_mha(q,k,v)
+    # x = mha(q,k,v,None,sm_scale=1/math.sqrt(q.shape[-1]))
     x = rearrange(x, "B L H D -> B L (H D)")
 
     # x = rearrange(x, "B H L D -> B L (H D)")

@@ -90,7 +90,7 @@ class RMSNorm(nnx.Module):
         # rrms = torch.rsqrt(torch.mean(x**2, dim=-1, keepdim=True) + 1e-6)
         rrms = jax.lax.rsqrt(jnp.mean(x**2, axis=-1, keepdims=True) + 1e-6)
         # return (x * rrms).to(dtype=x_dtype) * self.scale
-        return (x * rrms).astype(x.dtype) * self.scale
+        return (x * rrms).astype(x_dtype) * self.scale
 
 
 RMSNorm_class = RMSNorm
